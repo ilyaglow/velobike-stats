@@ -108,14 +108,16 @@ func procFile(c *vbpstats.Config, src string) error {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
+	defer wg.Wait()
+
 	go func() {
-		if err := send(c, &wg, recsChan); err != nil {
+		defer wg.Done()
+		if err := send(c, recsChan); err != nil {
 			log.Fatal(err)
 		}
 	}()
 
 	bzf := bzip2.NewReader(f)
-
 	tr := tar.NewReader(bzf)
 	for {
 		header, err := tr.Next()
@@ -142,7 +144,6 @@ func procFile(c *vbpstats.Config, src string) error {
 		}
 	}
 	close(recsChan)
-	wg.Wait()
 
 	return nil
 }
@@ -160,7 +161,7 @@ func procParkings(c *vbpstats.Config, uts string, parkings []velobike.Parking, r
 	return nil
 }
 
-func send(c *vbpstats.Config, wg *sync.WaitGroup, recsChan chan *vbpstats.Record) error {
+func send(c *vbpstats.Config, recsChan chan *vbpstats.Record) error {
 	tx, err := c.Conn.Begin()
 	if err != nil {
 		return err
@@ -215,7 +216,6 @@ func send(c *vbpstats.Config, wg *sync.WaitGroup, recsChan chan *vbpstats.Record
 			log.Printf("%d records has been imported", k)
 		}
 	}
-	log.Println("channel is closed!")
 
 	if j != 0 {
 		if err := tx.Commit(); err != nil {
@@ -223,7 +223,6 @@ func send(c *vbpstats.Config, wg *sync.WaitGroup, recsChan chan *vbpstats.Record
 		}
 		log.Printf("%d records has been imported", k)
 	}
-	wg.Done()
 
 	return nil
 }
