@@ -6,8 +6,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/ilyaglow/go-velobike/velobike"
+	"github.com/ilyaglow/velobike-stats"
 	"github.com/kshvakov/clickhouse"
+	"gopkg.ilya.app/ilyaglow/go-velobike.v2/velobike"
 )
 
 const (
@@ -30,7 +31,7 @@ const (
 			longitude Float64,
 			date Date Default today(),
 			timestamp Datetime,
-			state_count UInt32
+			state_seconds Float64
 		) engine=MergeTree(date, (id, timestamp), 8192)
 	`
 
@@ -52,7 +53,7 @@ const (
 			latitude,
 			longitude,
 			timestamp,
-			state_count
+			state_seconds
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		)
@@ -60,24 +61,19 @@ const (
 )
 
 var (
-	defaultTimeout = 1 * time.Minute
+	defaultTimeout = 5 * time.Second
 )
 
 type pState struct {
 	freePlaces int
-	count      int
+	timestamp  time.Time
+	seconds    float64
 }
 
 type config struct {
-	client             *velobike.Client
-	parkingsStateCount map[string]*pState
-	conn               *sql.DB
-}
-
-type record struct {
-	*velobike.Parking
-	StateCount int       `json:"StateCount,omitempty"`
-	Timestamp  time.Time `json:"Timestamp,omitempty"`
+	client        *velobike.Client
+	parkingsState map[string]*pState
+	conn          *sql.DB
 }
 
 func main() {
@@ -88,7 +84,7 @@ func main() {
 	defer conn.Close()
 
 	if err := conn.Ping(); err != nil {
-		panic(err)
+		log.Fatal("check your CLICKHOUSE_URL environment variable")
 	}
 
 	if _, err := conn.Exec(createStmt); err != nil {
@@ -96,9 +92,9 @@ func main() {
 	}
 
 	conf := &config{
-		client:             velobike.NewClient(nil),
-		parkingsStateCount: make(map[string]*pState),
-		conn:               conn,
+		client:        velobike.NewClient(nil),
+		parkingsState: make(map[string]*pState),
+		conn:          conn,
 	}
 
 	if err := conf.do(); err != nil {
@@ -109,41 +105,44 @@ func main() {
 	for range ticket.C {
 		go func() {
 			if err := conf.do(); err != nil {
-				log.Println(err)
+				log.Fatal(err)
 			}
 		}()
 	}
 }
 
-func (c *config) newRecord(p *velobike.Parking, ts time.Time) *record {
-	if _, ok := c.parkingsStateCount[*p.ID]; !ok {
-		c.parkingsStateCount[*p.ID] = &pState{
+func (c *config) newRecord(p *velobike.Parking, ts time.Time) *vbpstats.Record {
+	if _, ok := c.parkingsState[*p.ID]; !ok {
+		c.parkingsState[*p.ID] = &pState{
 			freePlaces: *p.FreePlaces,
-			count:      1,
+			seconds:    defaultTimeout.Seconds(),
+			timestamp:  ts,
 		}
 	} else {
-		if c.parkingsStateCount[*p.ID].freePlaces == *p.FreePlaces {
-			c.parkingsStateCount[*p.ID].count++
+		if c.parkingsState[*p.ID].freePlaces == *p.FreePlaces {
+			c.parkingsState[*p.ID].seconds = time.Since(c.parkingsState[*p.ID].timestamp).Seconds() + c.parkingsState[*p.ID].seconds
 		} else {
-			c.parkingsStateCount[*p.ID].count = 1
+			c.parkingsState[*p.ID].seconds = ts.Sub(c.parkingsState[*p.ID].timestamp).Seconds()
 		}
+
+		c.parkingsState[*p.ID].timestamp = ts
 	}
 
-	return &record{
-		Parking:    p,
-		StateCount: c.parkingsStateCount[*p.ID].count,
-		Timestamp:  ts,
+	return &vbpstats.Record{
+		Parking:      p,
+		StateSeconds: c.parkingsState[*p.ID].seconds,
+		Timestamp:    ts,
 	}
 }
 
-func (c *config) pollParkings() ([]*record, error) {
+func (c *config) pollParkings() ([]*vbpstats.Record, error) {
 	parkings, _, err := c.client.Parkings.List()
 	if err != nil {
 		return nil, err
 	}
 
 	ts := time.Now().UTC()
-	var recs []*record
+	var recs []*vbpstats.Record
 	for i := range parkings.Items {
 		recs = append(recs, c.newRecord(&parkings.Items[i], ts))
 	}
@@ -185,7 +184,7 @@ func (c *config) do() error {
 			*recs[i].Position.Lat,
 			*recs[i].Position.Lon,
 			clickhouse.DateTime(recs[i].Timestamp),
-			recs[i].StateCount,
+			recs[i].StateSeconds,
 		); err != nil {
 			return err
 		}
