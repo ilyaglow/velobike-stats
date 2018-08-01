@@ -82,12 +82,13 @@ func newRecord(c *vbpstats.Config, p *velobike.Parking, ut int64) *vbpstats.Reco
 		}
 	} else {
 		if c.ParkingsState[*p.ID].FreePlaces == *p.FreePlaces {
-			c.ParkingsState[*p.ID].Seconds = time.Since(c.ParkingsState[*p.ID].Timestamp).Seconds() + c.ParkingsState[*p.ID].Seconds
+			c.ParkingsState[*p.ID].Seconds = ts.Sub(c.ParkingsState[*p.ID].Timestamp).Seconds() + c.ParkingsState[*p.ID].Seconds
 		} else {
 			c.ParkingsState[*p.ID].Seconds = ts.Sub(c.ParkingsState[*p.ID].Timestamp).Seconds()
 		}
 
 		c.ParkingsState[*p.ID].Timestamp = ts
+		c.ParkingsState[*p.ID].FreePlaces = *p.FreePlaces
 	}
 
 	return &vbpstats.Record{
@@ -191,6 +192,7 @@ func send(c *vbpstats.Config, recsChan chan *vbpstats.Record) error {
 			*rec.TotalPlaces,
 			*rec.Position.Lat,
 			*rec.Position.Lon,
+			clickhouse.Date(rec.Timestamp),
 			clickhouse.DateTime(rec.Timestamp),
 			rec.StateSeconds,
 		); err != nil {
