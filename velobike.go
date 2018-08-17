@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"time"
 
-	"gopkg.ilya.app/ilyaglow/go-velobike.v2/velobike"
+	"github.com/rumyantseva/go-velobike/velobike"
 )
 
 const (

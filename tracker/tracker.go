@@ -6,9 +6,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/ilyaglow/velobike-stats"
 	"github.com/kshvakov/clickhouse"
-	"gopkg.ilya.app/ilyaglow/go-velobike.v2/velobike"
+	"github.com/rumyantseva/go-velobike/velobike"
+	"ilya.app/velobike-stats"
 )
 
 var (
